@@ -112,34 +112,44 @@ def read_theme_sources(base_dir: Path) -> list[SitemapSource]:
     for csv_path in sorted(theme_dir.glob("*.csv")):
         theme = csv_path.stem
         with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            sample = handle.read(2048)
-            handle.seek(0)
-            try:
-                has_header = csv.Sniffer().has_header(sample) if sample.strip() else False
-            except csv.Error:
-                has_header = False
+            rows = list(csv.reader(handle))
 
-            if has_header:
-                reader = csv.DictReader(handle)
-                for row in reader:
-                    site = (row.get("site") or row.get("Site") or "").strip()
-                    sitemap_url = (
-                        row.get("sitemap_url")
-                        or row.get("sitemap")
-                        or row.get("Sitemap")
-                        or ""
-                    ).strip()
-                    if site and sitemap_url:
-                        sources.append(SitemapSource(theme, site, sitemap_url))
-            else:
-                reader = csv.reader(handle)
-                for row in reader:
-                    if len(row) < 2:
-                        continue
-                    site = row[0].strip()
-                    sitemap_url = row[1].strip()
-                    if site and sitemap_url:
-                        sources.append(SitemapSource(theme, site, sitemap_url))
+        if not rows:
+            continue
+
+        first_row_lower = [cell.strip().lower() for cell in rows[0]]
+        has_header = "site" in first_row_lower and (
+            "sitemap_url" in first_row_lower or "sitemap" in first_row_lower
+        )
+
+        if has_header:
+            header = first_row_lower
+            for row in rows[1:]:
+                if not row:
+                    continue
+                padded = row + [""] * max(0, len(header) - len(row))
+                row_map = {header[i]: padded[i].strip() for i in range(len(header))}
+                site = row_map.get("site", "").strip()
+                sitemap_url = (
+                    row_map.get("sitemap_url", "")
+                    or row_map.get("sitemap", "")
+                    or row_map.get("sitemapurl", "")
+                ).strip()
+                if site and sitemap_url:
+                    sources.append(SitemapSource(theme, site, sitemap_url))
+        else:
+            for row in rows:
+                cleaned = [cell.strip() for cell in row]
+                if len(cleaned) >= 3:
+                    site = cleaned[0]
+                    sitemap_url = cleaned[2]
+                elif len(cleaned) >= 2:
+                    site = cleaned[0]
+                    sitemap_url = cleaned[1]
+                else:
+                    continue
+                if site and sitemap_url:
+                    sources.append(SitemapSource(theme, site, sitemap_url))
 
     return sources
 
