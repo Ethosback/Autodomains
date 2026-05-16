@@ -1,0 +1,59 @@
+name: Sitemap Monitor
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap_only:
+        description: "Initialiser les snapshots sans générer de rapports"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "0 13 * * *"
+      timezone: "Europe/Paris"
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run sitemap monitor
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_SUBJECT_PREFIX: ${{ vars.EMAIL_SUBJECT_PREFIX || 'Veille sitemaps' }}
+          KEYBERT_MODEL: ${{ vars.KEYBERT_MODEL || 'all-MiniLM-L6-v2' }}
+          BOOTSTRAP_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_only || 'false' }}
+        run: python scripts/monitor_sitemaps.py
+
+      - name: Commit updated state and reports
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state reports
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git commit -m "chore: update sitemap monitor state"
+          git push
