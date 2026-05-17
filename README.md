@@ -7,14 +7,16 @@ Ce dépôt met en place une veille quotidienne par thématique à partir de fich
 Chaque jour, le workflow GitHub Actions :
 
 1. lit tous les fichiers `data/themes/*.csv`
-2. récupère les URLs de chaque sitemap
-3. compare avec l'état précédent
-4. identifie les nouvelles URLs
-5. récupère la balise `<title>` de chaque nouvelle page
-6. extrait un mot-clé avec KeyBERT à partir du title
-7. ajoute une ligne par nouvelle URL à l'historique de la thématique
-8. envoie un email avec les CSV du jour
-9. commit l'état mis à jour dans le repo
+2. regroupe les sitemaps par site
+3. lit tous les sitemaps du site et agrège leurs URLs
+4. normalise les URLs puis compare avec l'état précédent
+5. ignore le site si un sitemap échoue après 3 tentatives
+6. identifie les nouvelles URLs jamais vues
+7. récupère en parallèle la balise `<title>` de chaque nouvelle page
+8. extrait un mot-clé avec KeyBERT à partir du title
+9. ajoute une ligne par nouvelle URL à l'historique de la thématique
+10. envoie un email avec les CSV du jour
+11. commit l'état mis à jour dans le repo
 
 Le premier lancement doit se faire en mode bootstrap pour initialiser l'état sans remonter tout l'historique existant.
 
@@ -31,6 +33,7 @@ scripts/
   discover_sitemaps.py
   monitor_sitemaps.py
 state/
+  ever_seen/
   snapshots/
 reports/
   daily/
@@ -54,6 +57,7 @@ Seules les colonnes `site` et `sitemap_url` sont utilisées par le moniteur. `ho
 ## Fichiers générés
 
 - `state/snapshots/<theme>/<site>.json` : snapshot courant des URLs vues pour le site
+- `state/ever_seen/<theme>/<site>.json` : toutes les URLs déjà vues historiquement pour le site
 - `reports/history/<theme>_all_urls.csv` : historique cumulé, une ligne par nouvelle URL
 - `reports/daily/<YYYY-MM-DD>/<theme>_new_urls.csv` : fichier du jour
 
@@ -106,10 +110,17 @@ Déclenche manuellement le workflow GitHub Actions avec `bootstrap_only=true`.
 Effet :
 
 - les snapshots sont créés
+- les fichiers `ever_seen` sont créés
 - aucun email n'est envoyé
 - aucun CSV quotidien n'est généré
 
 À partir du lendemain, le job planifié ne remontera que les nouvelles URLs.
+
+## Règles de robustesse
+
+- une URL n'est notifiée que si elle est absente du snapshot précédent et du fichier `ever_seen`
+- si un sitemap du site échoue après 3 tentatives, le snapshot du site n'est pas écrasé ce jour-là
+- la récupération des `<title>` est parallélisée et limitée à cette seule balise
 
 ## Lancement local
 

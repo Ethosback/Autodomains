@@ -7,13 +7,15 @@ import os
 import re
 import smtplib
 import sys
+import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import urlparse
+from urllib.parse import urlsplit, urlunsplit
 from xml.etree import ElementTree as ET
 
 import requests
@@ -22,13 +24,19 @@ from keybert import KeyBERT
 
 
 USER_AGENT = (
-    "Mozilla/5.0 (compatible; SitemapTopicMonitor/2.0; +https://github.com/)"
+    "Mozilla/5.0 (compatible; SitemapTopicMonitor/3.0; +https://github.com/)"
 )
-REQUEST_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "30"))
+SITEMAP_TIMEOUT = int(os.getenv("SITEMAP_TIMEOUT", "30"))
+TITLE_TIMEOUT = int(os.getenv("TITLE_TIMEOUT", "10"))
+TITLE_BYTE_LIMIT = int(os.getenv("TITLE_BYTE_LIMIT", "131072"))
+HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "3"))
 EMAIL_SUBJECT_PREFIX = os.getenv("EMAIL_SUBJECT_PREFIX", "Veille sitemaps")
-MAX_CHILD_SITEMAPS = int(os.getenv("MAX_CHILD_SITEMAPS", "200"))
 KEYBERT_MODEL = os.getenv("KEYBERT_MODEL", "all-MiniLM-L6-v2")
 BOOTSTRAP_ONLY = os.getenv("BOOTSTRAP_ONLY", "false").lower() == "true"
+TITLE_WORKERS = int(os.getenv("TITLE_WORKERS", "12"))
+PROGRESS_EVERY = int(os.getenv("PROGRESS_EVERY", "25"))
+
+RETRYABLE_STATUS_CODES = {408, 425, 429, 500, 502, 503, 504}
 
 STOPWORDS = {
     "a",
@@ -86,6 +94,14 @@ class UrlRecord:
     keyword_keybert: str
 
 
+def log_info(message: str) -> None:
+    print(f"[INFO] {message}", flush=True)
+
+
+def log_warn(message: str) -> None:
+    print(f"[WARN] {message}", flush=True)
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
@@ -104,12 +120,31 @@ def session_with_headers() -> requests.Session:
     return session
 
 
+def normalize_url(url: str) -> str:
+    cleaned = (url or "").strip()
+    if not cleaned:
+        return ""
+
+    parts = urlsplit(cleaned)
+    scheme = parts.scheme.lower()
+    netloc = parts.netloc.lower()
+    path = parts.path or "/"
+
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/")
+
+    return urlunsplit((scheme, netloc, path, parts.query, ""))
+
+
 def read_theme_sources(base_dir: Path) -> list[SitemapSource]:
     theme_dir = base_dir / "data" / "themes"
     ensure_dir(theme_dir)
     sources: list[SitemapSource] = []
 
     for csv_path in sorted(theme_dir.glob("*.csv")):
+        if csv_path.stem.endswith("_missing"):
+            continue
+
         theme = csv_path.stem
         with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
             rows = list(csv.reader(handle))
@@ -154,10 +189,48 @@ def read_theme_sources(base_dir: Path) -> list[SitemapSource]:
     return sources
 
 
-def fetch_bytes(session: requests.Session, url: str) -> bytes:
-    response = session.get(url, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
-    return response.content
+def fetch_response(
+    session: requests.Session,
+    url: str,
+    timeout: int,
+    stream: bool = False,
+) -> requests.Response:
+    response = session.get(url, timeout=timeout, allow_redirects=True, stream=stream)
+    if response.status_code >= 400:
+        response.raise_for_status()
+    return response
+
+
+def get_with_retries(
+    session: requests.Session,
+    url: str,
+    timeout: int,
+    stream: bool = False,
+) -> requests.Response:
+    last_error: Exception | None = None
+
+    for attempt in range(1, HTTP_RETRIES + 1):
+        response: requests.Response | None = None
+        try:
+            response = fetch_response(session, url, timeout=timeout, stream=stream)
+            return response
+        except requests.HTTPError as exc:
+            status_code = exc.response.status_code if exc.response is not None else None
+            last_error = exc
+            if response is not None:
+                response.close()
+            if status_code not in RETRYABLE_STATUS_CODES or attempt == HTTP_RETRIES:
+                raise
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt == HTTP_RETRIES:
+                raise
+
+        time.sleep(min(attempt, 3))
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"unexpected retry state for {url}")
 
 
 def maybe_decompress(content: bytes, url: str) -> bytes:
@@ -173,23 +246,34 @@ def local_name(tag: str) -> str:
     return tag.split("}", 1)[1] if "}" in tag else tag
 
 
-def parse_sitemap(session: requests.Session, sitemap_url: str, depth: int = 0) -> set[str]:
-    if depth > 3:
-        return set()
+def parse_sitemap(
+    session: requests.Session,
+    sitemap_url: str,
+    visited: set[str] | None = None,
+) -> tuple[set[str], bool]:
+    normalized_sitemap_url = normalize_url(sitemap_url)
+    if visited is None:
+        visited = set()
+
+    if normalized_sitemap_url in visited:
+        return set(), True
+    visited.add(normalized_sitemap_url)
 
     try:
-        raw_bytes = fetch_bytes(session, sitemap_url)
+        response = get_with_retries(session, normalized_sitemap_url, SITEMAP_TIMEOUT)
+        raw_bytes = response.content
+        final_url = response.url
     except requests.RequestException as exc:
-        print(f"[WARN] sitemap inaccessible: {sitemap_url} ({exc})")
-        return set()
+        log_warn(f"sitemap inaccessible: {normalized_sitemap_url} ({exc})")
+        return set(), False
 
-    xml_bytes = maybe_decompress(raw_bytes, sitemap_url)
+    xml_bytes = maybe_decompress(raw_bytes, final_url)
 
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError as exc:
-        print(f"[WARN] XML invalide: {sitemap_url} ({exc})")
-        return set()
+        log_warn(f"XML invalide: {normalized_sitemap_url} ({exc})")
+        return set(), False
 
     root_name = local_name(root.tag)
     if root_name == "urlset":
@@ -199,8 +283,10 @@ def parse_sitemap(session: requests.Session, sitemap_url: str, depth: int = 0) -
                 continue
             for child in url_node:
                 if local_name(child.tag) == "loc" and child.text:
-                    urls.add(child.text.strip())
-        return urls
+                    normalized_url = normalize_url(child.text)
+                    if normalized_url:
+                        urls.add(normalized_url)
+        return urls, True
 
     if root_name == "sitemapindex":
         child_sitemaps: list[str] = []
@@ -213,19 +299,27 @@ def parse_sitemap(session: requests.Session, sitemap_url: str, depth: int = 0) -
                     break
 
         urls: set[str] = set()
-        for child_url in child_sitemaps[:MAX_CHILD_SITEMAPS]:
-            urls.update(parse_sitemap(session, child_url, depth + 1))
-        return urls
+        all_ok = True
+        for child_url in child_sitemaps:
+            child_urls, child_ok = parse_sitemap(session, child_url, visited)
+            urls.update(child_urls)
+            if not child_ok:
+                all_ok = False
+        return urls, all_ok
 
-    print(f"[WARN] format XML non géré: {sitemap_url}")
-    return set()
+    log_warn(f"format XML non géré: {normalized_sitemap_url}")
+    return set(), False
 
 
 def snapshot_path(base_dir: Path, theme: str, site: str) -> Path:
     return base_dir / "state" / "snapshots" / theme / f"{slugify(site)}.json"
 
 
-def load_snapshot(path: Path) -> set[str]:
+def ever_seen_path(base_dir: Path, theme: str, site: str) -> Path:
+    return base_dir / "state" / "ever_seen" / theme / f"{slugify(site)}.json"
+
+
+def load_url_set(path: Path) -> set[str]:
     if not path.exists():
         return set()
     try:
@@ -235,27 +329,61 @@ def load_snapshot(path: Path) -> set[str]:
         return set()
 
 
-def save_snapshot(path: Path, sitemap_url: str, urls: Iterable[str]) -> None:
+def save_url_set(
+    path: Path,
+    urls: Iterable[str],
+    sitemap_urls: Iterable[str] | None = None,
+) -> None:
     ensure_dir(path.parent)
-    payload = {
-        "sitemap_url": sitemap_url,
+    payload: dict[str, object] = {
         "updated_on": date.today().isoformat(),
         "urls": sorted(set(urls)),
     }
+    if sitemap_urls is not None:
+        payload["sitemap_urls"] = sorted(set(sitemap_urls))
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def fetch_page_title(session: requests.Session, url: str) -> str:
+def fetch_page_title(url: str) -> str:
+    session = session_with_headers()
+    response: requests.Response | None = None
+
     try:
-        response = session.get(url, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
+        response = get_with_retries(session, url, TITLE_TIMEOUT, stream=True)
+        chunks: list[bytes] = []
+        total = 0
+        title_found = False
+
+        for chunk in response.iter_content(chunk_size=4096):
+            if not chunk:
+                continue
+            chunks.append(chunk)
+            total += len(chunk)
+            joined_lower = b"".join(chunks).lower()
+            if b"</title" in joined_lower:
+                title_found = True
+                break
+            if total >= TITLE_BYTE_LIMIT:
+                break
+
+        raw_html = b"".join(chunks)
+        if not raw_html:
+            return ""
+
+        encoding = response.encoding or response.apparent_encoding or "utf-8"
+        html = raw_html.decode(encoding, errors="ignore")
+        soup = BeautifulSoup(html, "html.parser")
+        if soup.title and soup.title.string:
+            return re.sub(r"\s+", " ", soup.title.string).strip()
+        if title_found:
+            return ""
+        return ""
     except requests.RequestException:
         return ""
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    if soup.title and soup.title.string:
-        return re.sub(r"\s+", " ", soup.title.string).strip()
-    return ""
+    finally:
+        if response is not None:
+            response.close()
+        session.close()
 
 
 def focus_title(title: str) -> str:
@@ -354,7 +482,7 @@ def smtp_config() -> dict[str, str]:
 def send_email(report_paths: list[Path], summary: dict[str, int]) -> None:
     config = smtp_config()
     if not config:
-        print("[INFO] SMTP non configuré, email ignoré.")
+        log_info("SMTP non configuré, email ignoré.")
         return
 
     subject = f"{EMAIL_SUBJECT_PREFIX} - {date.today().isoformat()}"
@@ -382,7 +510,7 @@ def send_email(report_paths: list[Path], summary: dict[str, int]) -> None:
         server.login(config["SMTP_USERNAME"], config["SMTP_PASSWORD"])
         server.send_message(message)
 
-    print(f"[INFO] Email envoyé à {config['EMAIL_TO']}")
+    log_info(f"Email envoyé à {config['EMAIL_TO']}")
 
 
 def process() -> int:
@@ -391,54 +519,102 @@ def process() -> int:
     sources = read_theme_sources(base_dir)
 
     if not sources:
-        print("[INFO] Aucun CSV trouvé dans data/themes.")
+        log_info("Aucun CSV trouvé dans data/themes.")
         return 0
 
-    session = session_with_headers()
-    pending_urls: list[tuple[SitemapSource, str]] = []
-
+    grouped_sources: dict[tuple[str, str], list[str]] = defaultdict(list)
     for source in sources:
-        print(f"[INFO] Traitement {source.theme} / {source.site}")
-        current_urls = parse_sitemap(session, source.sitemap_url)
-        if not current_urls:
-            print(f"[INFO] Aucun URL récupéré pour {source.site}")
+        grouped_sources[(source.theme, source.site)].append(source.sitemap_url)
+
+    session = session_with_headers()
+    pending_urls: list[tuple[str, str, str]] = []
+    total_sites = len(grouped_sources)
+
+    for index, ((theme, site), sitemap_urls) in enumerate(sorted(grouped_sources.items()), start=1):
+        log_info(f"[{index}/{total_sites}] Traitement {theme} / {site}")
+        current_urls: set[str] = set()
+        crawl_complete = True
+
+        for sitemap_url in sitemap_urls:
+            parsed_urls, parsed_ok = parse_sitemap(session, sitemap_url)
+            current_urls.update(parsed_urls)
+            if not parsed_ok:
+                crawl_complete = False
+
+        if not crawl_complete:
+            log_warn(f"Crawl sitemap incomplet pour {site}, snapshot conservé.")
             continue
 
-        snapshot_file = snapshot_path(base_dir, source.theme, source.site)
-        previous_urls = load_snapshot(snapshot_file)
-        new_urls = sorted(current_urls - previous_urls)
-        save_snapshot(snapshot_file, source.sitemap_url, current_urls)
+        if not current_urls:
+            log_info(f"Aucune URL récupérée pour {site}, snapshot conservé.")
+            continue
+
+        snapshot_file = snapshot_path(base_dir, theme, site)
+        ever_seen_file = ever_seen_path(base_dir, theme, site)
+        previous_urls = load_url_set(snapshot_file)
+        ever_seen_urls = load_url_set(ever_seen_file)
+
+        new_urls = sorted(url for url in current_urls - previous_urls if url not in ever_seen_urls)
+
+        save_url_set(snapshot_file, current_urls, sitemap_urls=sitemap_urls)
+        updated_ever_seen = set(ever_seen_urls)
+        updated_ever_seen.update(current_urls)
+        save_url_set(ever_seen_file, updated_ever_seen)
 
         if BOOTSTRAP_ONLY:
             continue
 
         if not new_urls:
-            print(f"[INFO] Pas de nouvelles URLs pour {source.site}")
+            log_info(f"Pas de nouvelles URLs pour {site}")
             continue
 
+        log_info(f"{site}: {len(new_urls)} nouvelle(s) URL(s)")
         for url in new_urls:
-            pending_urls.append((source, url))
+            pending_urls.append((theme, site, url))
+
+    session.close()
 
     if BOOTSTRAP_ONLY:
-        print("[INFO] Mode bootstrap terminé. Snapshots initialisés sans reporting.")
+        log_info("Mode bootstrap terminé. Snapshots et ever_seen initialisés sans reporting.")
         return 0
 
     if not pending_urls:
-        print("[INFO] Aucune nouvelle URL à notifier.")
+        log_info("Aucune nouvelle URL à notifier.")
         return 0
 
-    print(f"[INFO] Initialisation KeyBERT ({KEYBERT_MODEL})")
+    log_info(f"{len(pending_urls)} nouvelle(s) URL(s) à enrichir avec le <title>")
+    title_results: dict[str, str] = {}
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=max(1, TITLE_WORKERS)) as executor:
+        future_to_url = {
+            executor.submit(fetch_page_title, url): url
+            for _theme, _site, url in pending_urls
+        }
+        total_titles = len(future_to_url)
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                title_results[url] = future.result()
+            except Exception as exc:  # pragma: no cover - guardrail
+                log_warn(f"échec inattendu sur le title {url} ({exc})")
+                title_results[url] = ""
+            completed += 1
+            if completed % PROGRESS_EVERY == 0 or completed == total_titles:
+                log_info(f"Titles récupérés: {completed}/{total_titles}")
+
+    log_info(f"Initialisation KeyBERT ({KEYBERT_MODEL})")
     extractor = KeyBERT(model=KEYBERT_MODEL)
     new_records_by_theme: dict[str, list[UrlRecord]] = defaultdict(list)
 
-    for source, url in pending_urls:
-        title = fetch_page_title(session, url)
+    for theme, site, url in pending_urls:
+        title = title_results.get(url, "")
         keyword = extract_keyword_from_title(extractor, title) if title else ""
-        new_records_by_theme[source.theme].append(
+        new_records_by_theme[theme].append(
             UrlRecord(
                 detected_on=today,
-                theme=source.theme,
-                domain=source.site,
+                theme=theme,
+                domain=site,
                 url=url,
                 title=title,
                 keyword_keybert=keyword,

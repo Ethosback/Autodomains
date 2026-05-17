@@ -44,7 +44,7 @@ jobs:
           EMAIL_SUBJECT_PREFIX: ${{ vars.EMAIL_SUBJECT_PREFIX || 'Veille sitemaps' }}
           KEYBERT_MODEL: ${{ vars.KEYBERT_MODEL || 'all-MiniLM-L6-v2' }}
           BOOTSTRAP_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_only || 'false' }}
-        run: python scripts/monitor_sitemaps.py
+        run: python -u scripts/monitor_sitemaps.py
 
       - name: Commit updated state and reports
         run: |
