@@ -1,10 +1,11 @@
 {
-  "updated_on": "2026-05-18",
+  "updated_on": "2026-05-19",
   "urls": [
     "https://ma-maison-pratique.fr/",
     "https://ma-maison-pratique.fr/allee-jardin-simple",
     "https://ma-maison-pratique.fr/ambiance-chaleureuse-annee",
     "https://ma-maison-pratique.fr/ambiance-chaleureuse-budget",
+    "https://ma-maison-pratique.fr/amenagement-buanderie-hall-entree",
     "https://ma-maison-pratique.fr/amenagement-buanderie-idees-conseils",
     "https://ma-maison-pratique.fr/amenagement-buanderie-ikea",
     "https://ma-maison-pratique.fr/amenagement-buanderie-moderne",
@@ -27,6 +28,7 @@
     "https://ma-maison-pratique.fr/buanderie-campagne-chic",
     "https://ma-maison-pratique.fr/buanderie-design-elegante",
     "https://ma-maison-pratique.fr/buanderie-lumineuse-etageres-ouvertes",
+    "https://ma-maison-pratique.fr/buanderie-rustique-minimaliste",
     "https://ma-maison-pratique.fr/category/deco-amenagement",
     "https://ma-maison-pratique.fr/category/guides-bricolage",
     "https://ma-maison-pratique.fr/category/jardin-exterieurs",
@@ -72,6 +74,8 @@
     "https://ma-maison-pratique.fr/optimiser-petit-espace-exterieur",
     "https://ma-maison-pratique.fr/optimiser-pieces-intelligemment",
     "https://ma-maison-pratique.fr/optimiser-rangement-petit-logement",
+    "https://ma-maison-pratique.fr/organisation-buanderie-idees-pratiques",
+    "https://ma-maison-pratique.fr/organiser-buanderie-astuces-pratiques",
     "https://ma-maison-pratique.fr/organiser-buanderie-pratique",
     "https://ma-maison-pratique.fr/organiser-maison-temps",
     "https://ma-maison-pratique.fr/organiser-placards-durablement",
@@ -380,7 +384,8 @@
     "https://ma-maison-pratique.fr/tag/trou-dans-le-mur",
     "https://ma-maison-pratique.fr/tag/tutoriel-etagere",
     "https://ma-maison-pratique.fr/tag/type-de-mur",
-    "https://ma-maison-pratique.fr/tag/types-de-chevilles"
+    "https://ma-maison-pratique.fr/tag/types-de-chevilles",
+    "https://ma-maison-pratique.fr/wastoren-personnalises-choisir-design"
   ],
   "sitemap_urls": [
     "https://ma-maison-pratique.fr/sitemap_index.xml"
