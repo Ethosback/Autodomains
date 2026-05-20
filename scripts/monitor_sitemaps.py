@@ -551,15 +551,23 @@ def process() -> int:
 
         snapshot_file = snapshot_path(base_dir, theme, site)
         ever_seen_file = ever_seen_path(base_dir, theme, site)
+        site_is_new = not snapshot_file.exists()
         previous_urls = load_url_set(snapshot_file)
         ever_seen_urls = load_url_set(ever_seen_file)
-
-        new_urls = sorted(url for url in current_urls - previous_urls if url not in ever_seen_urls)
 
         save_url_set(snapshot_file, current_urls, sitemap_urls=sitemap_urls)
         updated_ever_seen = set(ever_seen_urls)
         updated_ever_seen.update(current_urls)
         save_url_set(ever_seen_file, updated_ever_seen)
+
+        if site_is_new:
+            log_info(
+                f"Initialisation silencieuse pour {site} ({theme}) : "
+                f"{len(current_urls)} URL(s) enregistrée(s) sans notification"
+            )
+            continue
+
+        new_urls = sorted(url for url in current_urls - previous_urls if url not in ever_seen_urls)
 
         if BOOTSTRAP_ONLY:
             continue

@@ -20,6 +20,8 @@ Chaque jour, le workflow GitHub Actions :
 
 Le premier lancement doit se faire en mode bootstrap pour initialiser l'état sans remonter tout l'historique existant.
 
+Un site sans snapshot existant est initialisé silencieusement au premier run : ses URLs sont enregistrées dans `state/`, mais aucune notification n'est envoyée pour ce site ce jour-là. Cela permet d'ajouter une nouvelle thématique sans toucher au suivi normal des thématiques déjà actives.
+
 ## Structure
 
 ```text
