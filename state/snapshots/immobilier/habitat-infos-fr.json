@@ -1,5 +1,5 @@
 {
-  "updated_on": "2026-05-23",
+  "updated_on": "2026-05-24",
   "urls": [
     "https://habitat-infos.fr/",
     "https://habitat-infos.fr/adapter-logement-besoins",
@@ -17,6 +17,7 @@
     "https://habitat-infos.fr/bibliotheque-angle-blanche",
     "https://habitat-infos.fr/bibliotheque-maison-bureau-sur-mesure",
     "https://habitat-infos.fr/bibliotheque-moulures-deco",
+    "https://habitat-infos.fr/bibliotheque-murale-effet-chene",
     "https://habitat-infos.fr/bibliotheque-sur-mesure-paris",
     "https://habitat-infos.fr/bibliotheque-thematique-interets",
     "https://habitat-infos.fr/bibliotheques-diy-petits-espaces",
@@ -61,8 +62,11 @@
     "https://habitat-infos.fr/fauteuil-cuir-vintage-decoration",
     "https://habitat-infos.fr/garanties-verifier-travaux",
     "https://habitat-infos.fr/gerer-travaux-site-occupe",
+    "https://habitat-infos.fr/hack-bibliotheque-ikea",
     "https://habitat-infos.fr/harmoniser-couleurs-chez-soi",
+    "https://habitat-infos.fr/idees-amenager-salon",
     "https://habitat-infos.fr/idees-bibliotheque-elegantes-pratiques",
+    "https://habitat-infos.fr/idees-bibliotheques-integrees-elegantes",
     "https://habitat-infos.fr/idees-bureau-creatif",
     "https://habitat-infos.fr/idees-coin-lecture-cosy",
     "https://habitat-infos.fr/idees-customisation-bibliotheque-billy",
@@ -380,7 +384,8 @@
     "https://habitat-infos.fr/travaux-mauvais-recours",
     "https://habitat-infos.fr/travaux-soi-meme-ou-pro",
     "https://habitat-infos.fr/trouver-style-deco",
-    "https://habitat-infos.fr/valoriser-exterieur-sans-travaux"
+    "https://habitat-infos.fr/valoriser-exterieur-sans-travaux",
+    "https://habitat-infos.fr/vitrine-lumineuse-deco"
   ],
   "sitemap_urls": [
     "https://habitat-infos.fr/sitemap_index.xml"
